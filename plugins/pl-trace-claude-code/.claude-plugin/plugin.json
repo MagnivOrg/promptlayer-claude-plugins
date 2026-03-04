@@ -1,0 +1,8 @@
+{
+  "name": "pl-trace-claude-code",
+  "description": "Trace Claude Code sessions and emit OTLP/HTTP JSON spans.",
+  "version": "0.1.0",
+  "author": {
+    "name": "PromptLayer"
+  }
+}
