@@ -48,7 +48,6 @@ turn_start_ns="$(get_session_state "$session_id" current_turn_start_ns)"
 pending_tool_calls="$(get_session_state "$session_id" pending_tool_calls)"
 session_end_requested="$(get_session_state "$session_id" session_end_requested)"
 session_init_source="$(get_session_state "$session_id" session_init_source)"
-session_root_emitted="$(get_session_state "$session_id" session_root_emitted)"
 session_start_ns="$(get_session_state "$session_id" session_start_ns)"
 
 [[ -z "$trace_id" || -z "$session_span_id" ]] && exit 0
@@ -79,14 +78,19 @@ else
 	turn_start_ns="$(echo "$parsed" | jq -r '.turn.start_ns')"
 	turn_end_ns="$(echo "$parsed" | jq -r '.turn.end_ns')"
 
-	# Python Agent SDK callback hooks may not emit SessionStart/SessionEnd.
-	# If we lazily initialized session state, ensure root span exists from Stop.
-	if [[ "$session_init_source" == "lazy_init" && "$session_root_emitted" != "true" ]]; then
-		session_attrs='{"source":"claude-code","hook":"StopFallback","node_type":"WORKFLOW","session.lifecycle":"stop_fallback"}'
-		add_span_to_batch "$trace_id" "$session_span_id" "" "Claude Code session" "1" "$session_start_ns" "$turn_end_ns" "$session_attrs" || true
-		session_root_emitted="true"
-		emitted_root="true"
+	# Emit (or re-emit) the root session span eagerly so the trace is visible
+	# in the UI before the session ends. The server upserts on span_id conflict,
+	# so re-emitting with an updated end time is safe.
+	if [[ "$session_init_source" == "lazy_init" ]]; then
+		session_hook_attr="StopFallback"
+		session_lifecycle_attr="stop_fallback"
+	else
+		session_hook_attr="Stop"
+		session_lifecycle_attr="in_progress"
 	fi
+	session_attrs="{\"source\":\"claude-code\",\"hook\":\"$session_hook_attr\",\"node_type\":\"WORKFLOW\",\"session.lifecycle\":\"$session_lifecycle_attr\"}"
+	add_span_to_batch "$trace_id" "$session_span_id" "" "Claude Code session" "1" "$session_start_ns" "$turn_end_ns" "$session_attrs" || true
+	emitted_root="true"
 
 	turn_attrs='{"source":"claude-code","hook":"UserPromptSubmit","node_type":"WORKFLOW"}'
 	add_span_to_batch "$trace_id" "$turn_span_id" "$session_span_id" "Turn" "1" "$turn_start_ns" "$turn_end_ns" "$turn_attrs" || true
@@ -112,8 +116,8 @@ else
 	done < <(echo "$parsed" | jq -c '.llms[]?')
 fi
 
-# If SessionEnd arrived while Stop was running, include root span before cleanup.
-if [[ "$session_end_requested" == "true" && "$session_root_emitted" != "true" ]]; then
+# If SessionEnd arrived while Stop was running, re-emit root span with final end time.
+if [[ "$session_end_requested" == "true" ]]; then
 	end_ns="$(now_ns)"
 	session_end_attrs='{"source":"claude-code","hook":"SessionEnd","node_type":"WORKFLOW","session.lifecycle":"deferred_finalize"}'
 	add_span_to_batch "$trace_id" "$session_span_id" "" "Claude Code session" "1" "$session_start_ns" "$end_ns" "$session_end_attrs" || true
@@ -132,7 +136,6 @@ fi
 
 latest_end_requested="$(get_session_state "$session_id" session_end_requested)"
 latest_turn_span_id="$(get_session_state "$session_id" current_turn_span_id)"
-latest_root_emitted="$(get_session_state "$session_id" session_root_emitted)"
 latest_trace_id="$(get_session_state "$session_id" trace_id)"
 latest_session_span_id="$(get_session_state "$session_id" session_span_id)"
 latest_session_start_ns="$(get_session_state "$session_id" session_start_ns)"
@@ -140,7 +143,7 @@ latest_session_start_ns="$(get_session_state "$session_id" session_start_ns)"
 [[ -z "$latest_session_start_ns" ]] && latest_session_start_ns="$(now_ns)"
 
 need_finalize_root="false"
-if [[ "$latest_end_requested" == "true" && -z "$latest_turn_span_id" && "$latest_root_emitted" != "true" ]]; then
+if [[ "$latest_end_requested" == "true" && -z "$latest_turn_span_id" ]]; then
 	need_finalize_root="true"
 fi
 
