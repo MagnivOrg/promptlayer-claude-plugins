@@ -101,6 +101,7 @@ def parse_transcript(transcript_path, turn_start_fallback, pending_payloads, exp
 
     turn_records = records[turn_start_idx:]
     history = []
+    llm_input_cursor = 0
     tools = []
     llms = []
     pending_tool_uses = []
@@ -256,7 +257,8 @@ def parse_transcript(transcript_path, turn_start_fallback, pending_payloads, exp
         if stop_reason:
             attrs["gen_ai.completion.0.finish_reason"] = stop_reason
 
-        flatten_indexed("gen_ai.prompt", history, attrs)
+        immediate_input = history[llm_input_cursor:]
+        flatten_indexed("gen_ai.prompt", immediate_input, attrs)
 
         completion_item = {"role": "assistant", "content": output_text}
         if tool_calls:
@@ -276,6 +278,7 @@ def parse_transcript(transcript_path, turn_start_fallback, pending_payloads, exp
         if tool_calls:
             assistant_history["tool_calls"] = tool_calls
         history.append(assistant_history)
+        llm_input_cursor = len(history)
 
     if turn_start_ns is None:
         turn_start_ns = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)

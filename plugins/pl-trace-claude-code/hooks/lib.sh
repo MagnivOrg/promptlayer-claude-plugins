@@ -245,8 +245,8 @@ ensure_session_initialized() {
 	log "INFO" "Session initialized lazily session_id=$sid trace_id=$trace_id"
 }
 
-post_otlp_payload_raw() {
-	local payload="$1"
+post_otlp_payload_file() {
+	local payload_file="$1"
 	local status response_file
 	response_file="$(mktemp "${TMPDIR:-/tmp}/pl-otlp-response.XXXXXX")"
 	status="$(curl -sS -o "$response_file" -w "%{http_code}" -X POST \
@@ -255,7 +255,7 @@ post_otlp_payload_raw() {
 		--connect-timeout "$PL_OTLP_CONNECT_TIMEOUT" \
 		--max-time "$PL_OTLP_MAX_TIME" \
 		"$PL_OTLP_ENDPOINT" \
-		-d "$payload" || true)"
+		-d @"$payload_file" || true)"
 
 	if [[ "$status" != "200" ]]; then
 		log "ERROR" "Failed OTLP export status=$status"
@@ -281,12 +281,11 @@ post_otlp_payload_raw() {
 	return 0
 }
 
-append_to_otlp_queue() {
-	local payload="$1"
+append_to_otlp_queue_file() {
+	local payload_file="$1"
 	acquire_queue_lock || return 1
 	# Compact to single line to preserve ndjson format
-	payload="$(printf '%s' "$payload" | jq -c '.')"
-	printf '%s\n' "$payload" >>"$PL_QUEUE_FILE"
+	jq -c '.' "$payload_file" >>"$PL_QUEUE_FILE"
 	chmod 600 "$PL_QUEUE_FILE" 2>/dev/null || true
 	release_queue_lock
 	return 0
@@ -323,14 +322,17 @@ drain_otlp_queue() {
 	retryable_fail=0
 	fail_index=-1
 
+	local queued_tmp
+	queued_tmp="$(mktemp "${TMPDIR:-/tmp}/pl-otlp-queued.XXXXXX")"
+
 	for ((i = 0; i < max_attempts; i++)); do
-		local queued_payload
-		queued_payload="${queue_payloads[$i]}"
-		if [[ -z "$queued_payload" ]]; then
+		if [[ -z "${queue_payloads[$i]}" ]]; then
 			continue
 		fi
 
-		if post_otlp_payload_raw "$queued_payload"; then
+		printf '%s' "${queue_payloads[$i]}" >"$queued_tmp"
+
+		if post_otlp_payload_file "$queued_tmp"; then
 			replayed=$((replayed + 1))
 			continue
 		else
@@ -346,6 +348,8 @@ drain_otlp_queue() {
 		fail_index="$i"
 		break
 	done
+
+	rm -f "$queued_tmp"
 
 	local tmp remaining_start
 	tmp="$(mktemp "${TMPDIR:-/tmp}/pl-otlp-queue.XXXXXX")"
@@ -373,20 +377,20 @@ drain_otlp_queue() {
 	return 0
 }
 
-send_otlp_payload() {
-	local payload="$1"
+send_otlp_payload_file() {
+	local payload_file="$1"
 	local rc
 
 	drain_otlp_queue || true
 
-	if post_otlp_payload_raw "$payload"; then
+	if post_otlp_payload_file "$payload_file"; then
 		return 0
 	else
 		rc=$?
 	fi
 
 	if [[ "$rc" == "1" ]]; then
-		append_to_otlp_queue "$payload" || log "ERROR" "Failed to append OTLP payload to queue"
+		append_to_otlp_queue_file "$payload_file" || log "ERROR" "Failed to append OTLP payload to queue"
 	fi
 	return 1
 }
@@ -481,26 +485,19 @@ build_span_json() {
 	echo "$span_json"
 }
 
-emit_spans_batch() {
-	local spans_json="$1"
-	if [[ -z "$spans_json" || "$spans_json" == "[]" ]]; then
-		return 0
-	fi
-
-	local payload
-	payload="$(jq -cn --argjson spans "$spans_json" '{resourceSpans:[{resource:{attributes:[{key:"service.name",value:{stringValue:"claude-code"}}]},scopeSpans:[{spans:$spans}]}]}')"
-	send_otlp_payload "$payload"
-}
-
 emit_spans_batch_file() {
 	local spans_file="$1"
 	if [[ ! -s "$spans_file" ]]; then
 		return 0
 	fi
 
-	local spans_json
-	spans_json="$(jq -cs '.' "$spans_file")"
-	emit_spans_batch "$spans_json"
+	local payload_file
+	payload_file="$(mktemp "${TMPDIR:-/tmp}/pl-otlp-batch.XXXXXX")"
+	jq -cs '{resourceSpans:[{resource:{attributes:[{key:"service.name",value:{stringValue:"claude-code"}}]},scopeSpans:[{spans:.}]}]}' "$spans_file" >"$payload_file"
+	send_otlp_payload_file "$payload_file"
+	local rc=$?
+	rm -f "$payload_file"
+	return $rc
 }
 
 emit_span() {
@@ -513,7 +510,12 @@ emit_span() {
 	local end_ns="$7"
 	local attrs_json="$8"
 
-	local span_json
+	local span_json spans_file
 	span_json="$(build_span_json "$trace_id" "$span_id" "$parent_span_id" "$name" "$kind" "$start_ns" "$end_ns" "$attrs_json")" || return 1
-	emit_spans_batch "[${span_json}]"
+	spans_file="$(mktemp "${TMPDIR:-/tmp}/pl-otlp-span.XXXXXX")"
+	printf '%s\n' "$span_json" >"$spans_file"
+	emit_spans_batch_file "$spans_file"
+	local rc=$?
+	rm -f "$spans_file"
+	return $rc
 }
