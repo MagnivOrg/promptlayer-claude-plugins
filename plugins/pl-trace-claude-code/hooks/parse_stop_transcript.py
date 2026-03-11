@@ -106,6 +106,7 @@ def parse_transcript(transcript_path, turn_start_fallback, pending_payloads, exp
     llms = []
     pending_tool_uses = []
     pending_payload_idx = 0
+    saw_queue_input = False
 
     turn_start_ns = turn_start_fallback
     turn_end_ns = turn_start_fallback
@@ -120,6 +121,16 @@ def parse_transcript(transcript_path, turn_start_fallback, pending_payloads, exp
                 turn_end_ns = timestamp_ns
 
         rec_type = rec.get("type")
+        if rec_type == "queue-operation":
+            operation = stringify(rec.get("operation"))
+            if operation == "enqueue":
+                content = stringify(rec.get("content"))
+                if content:
+                    history.append({"role": "user", "content": content})
+                    last_input_ns = timestamp_ns or last_input_ns
+                    saw_queue_input = True
+            continue
+
         if rec_type == "user":
             content = rec.get("message", {}).get("content")
             if is_tool_result_user(rec):
@@ -279,6 +290,33 @@ def parse_transcript(transcript_path, turn_start_fallback, pending_payloads, exp
             assistant_history["tool_calls"] = tool_calls
         history.append(assistant_history)
         llm_input_cursor = len(history)
+
+    if not llms and saw_queue_input:
+        llm_start_ns = last_input_ns or turn_start_ns
+        llm_end_ns = turn_end_ns or llm_start_ns
+        if llm_start_ns is None:
+            llm_start_ns = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
+        if llm_end_ns is None or llm_end_ns < llm_start_ns:
+            llm_end_ns = llm_start_ns
+
+        attrs = {
+            "source": "claude-code",
+            "hook": "Stop",
+            "node_type": "PROMPT_TEMPLATE",
+            "gen_ai.operation.name": "chat",
+            "gen_ai.provider.name": "unknown",
+        }
+        flatten_indexed("gen_ai.prompt", history[llm_input_cursor:], attrs)
+        flatten_indexed("gen_ai.completion", [{"role": "assistant", "content": ""}], attrs)
+
+        llms.append(
+            {
+                "name": "LLM call",
+                "start_ns": int(llm_start_ns),
+                "end_ns": int(llm_end_ns),
+                "attributes": attrs,
+            }
+        )
 
     if turn_start_ns is None:
         turn_start_ns = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)

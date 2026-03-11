@@ -19,12 +19,12 @@ trace_id="$(get_session_state "$session_id" trace_id)"
 session_span_id="$(get_session_state "$session_id" session_span_id)"
 session_start_ns="$(get_session_state "$session_id" session_start_ns)"
 stop_in_flight="$(get_session_state "$session_id" stop_in_flight)"
-current_turn_span_id="$(get_session_state "$session_id" current_turn_span_id)"
+current_turn_start_ns="$(get_session_state "$session_id" current_turn_start_ns)"
 [[ -z "$trace_id" || -z "$session_span_id" ]] && exit 0
 [[ -z "$session_start_ns" ]] && session_start_ns="$(now_ns)"
 [[ -z "$stop_in_flight" ]] && stop_in_flight="false"
 
-if [[ -n "$current_turn_span_id" || "$stop_in_flight" == "true" ]]; then
+if [[ -n "$current_turn_start_ns" || "$stop_in_flight" == "true" ]]; then
 	set_session_state "$session_id" session_end_requested "true"
 	log "INFO" "SessionEnd deferred until Stop session_id=$session_id"
 	exit 0
@@ -43,9 +43,9 @@ acquire_session_lock "$session_id" || exit 0
 trap 'release_session_lock' EXIT
 
 stop_in_flight="$(get_session_state "$session_id" stop_in_flight)"
-current_turn_span_id="$(get_session_state "$session_id" current_turn_span_id)"
+current_turn_start_ns="$(get_session_state "$session_id" current_turn_start_ns)"
 [[ -z "$stop_in_flight" ]] && stop_in_flight="false"
-if [[ -n "$current_turn_span_id" || "$stop_in_flight" == "true" ]]; then
+if [[ -n "$current_turn_start_ns" || "$stop_in_flight" == "true" ]]; then
 	set_session_state "$session_id" session_end_requested "true"
 	log "INFO" "SessionEnd deferred until Stop session_id=$session_id"
 	exit 0
