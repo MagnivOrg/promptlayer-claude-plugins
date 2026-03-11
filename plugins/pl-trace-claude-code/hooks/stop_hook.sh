@@ -65,10 +65,25 @@ release_session_lock
 
 emitted_root="false"
 
+parse_transcript_with_retry() {
+	local attempts=0
+	local parsed llm_count
+	while true; do
+		parsed="$(PL_PENDING_TOOL_CALLS="$pending_tool_calls" python3 "$SCRIPT_DIR/parse_stop_transcript.py" "$transcript_path" "$turn_start_ns" "$session_id")"
+		llm_count="$(echo "$parsed" | jq -r '.llms | length')"
+		if [[ "$llm_count" -gt 0 || $attempts -ge 10 ]]; then
+			echo "$parsed"
+			return 0
+		fi
+		attempts=$((attempts + 1))
+		sleep 0.2
+	done
+}
+
 if [[ -z "$transcript_path" || ! -f "$transcript_path" ]]; then
 	log "WARN" "Stop missing transcript session_id=$session_id"
 else
-	parsed="$(PL_PENDING_TOOL_CALLS="$pending_tool_calls" python3 "$SCRIPT_DIR/parse_stop_transcript.py" "$transcript_path" "$turn_start_ns" "$session_id")"
+	parsed="$(parse_transcript_with_retry)"
 
 	turn_start_ns="$(echo "$parsed" | jq -r '.turn.start_ns')"
 	turn_end_ns="$(echo "$parsed" | jq -r '.turn.end_ns')"
