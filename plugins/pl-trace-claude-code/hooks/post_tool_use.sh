@@ -18,11 +18,9 @@ tool_output="$(echo "$input" | jq -c '.tool_response // .output // {}')"
 ensure_session_initialized "$session_id"
 
 trace_id="$(get_session_state "$session_id" trace_id)"
-parent_span_id="$(get_session_state "$session_id" current_turn_span_id)"
 [[ -z "$trace_id" ]] && exit 0
-if [[ -z "$parent_span_id" ]]; then
-	parent_span_id="$(generate_span_id)"
-	set_session_state "$session_id" current_turn_span_id "$parent_span_id"
+turn_start_ns="$(get_session_state "$session_id" current_turn_start_ns)"
+if [[ -z "$turn_start_ns" ]]; then
 	set_session_state "$session_id" current_turn_start_ns "$(now_ns)"
 fi
 

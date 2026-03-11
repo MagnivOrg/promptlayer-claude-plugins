@@ -15,14 +15,11 @@ session_id="$(echo "$input" | jq -r '.session_id // empty')"
 ensure_session_initialized "$session_id"
 
 trace_id="$(get_session_state "$session_id" trace_id)"
-parent_span_id="$(get_session_state "$session_id" session_span_id)"
-[[ -z "$trace_id" || -z "$parent_span_id" ]] && exit 0
-
-turn_span_id="$(generate_span_id)"
+session_span_id="$(get_session_state "$session_id" session_span_id)"
+[[ -z "$trace_id" || -z "$session_span_id" ]] && exit 0
 start_ns="$(now_ns)"
 
-set_session_state "$session_id" current_turn_span_id "$turn_span_id"
 set_session_state "$session_id" current_turn_start_ns "$start_ns"
 set_session_state "$session_id" pending_tool_calls "[]"
 
-log "INFO" "UserPromptSubmit captured session_id=$session_id turn_span_id=$turn_span_id"
+log "INFO" "UserPromptSubmit captured session_id=$session_id"

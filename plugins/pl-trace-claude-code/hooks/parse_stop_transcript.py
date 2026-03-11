@@ -32,6 +32,28 @@ def stringify(value):
     return json.dumps(value, ensure_ascii=False)
 
 
+def content_to_text(content):
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text")
+                if isinstance(text, str) and text:
+                    parts.append(text)
+                    continue
+            serialized = stringify(block)
+            if serialized:
+                parts.append(serialized)
+        return "\n".join(parts).strip()
+    if isinstance(content, dict) and content.get("type") == "text":
+        text = content.get("text")
+        if isinstance(text, str):
+            return text
+    return stringify(content)
+
+
 def message_text(content):
     if isinstance(content, str):
         return content
@@ -106,6 +128,7 @@ def parse_transcript(transcript_path, turn_start_fallback, pending_payloads, exp
     llms = []
     pending_tool_uses = []
     pending_payload_idx = 0
+    saw_human_input = False
 
     turn_start_ns = turn_start_fallback
     turn_end_ns = turn_start_fallback
@@ -120,6 +143,16 @@ def parse_transcript(transcript_path, turn_start_fallback, pending_payloads, exp
                 turn_end_ns = timestamp_ns
 
         rec_type = rec.get("type")
+        if rec_type == "queue-operation":
+            operation = stringify(rec.get("operation"))
+            if operation == "enqueue":
+                content = content_to_text(rec.get("content"))
+                if content:
+                    history.append({"role": "user", "content": content})
+                    last_input_ns = timestamp_ns or last_input_ns
+                    saw_human_input = True
+            continue
+
         if rec_type == "user":
             content = rec.get("message", {}).get("content")
             if is_tool_result_user(rec):
@@ -184,9 +217,10 @@ def parse_transcript(transcript_path, turn_start_fallback, pending_payloads, exp
                 last_input_ns = timestamp_ns or last_input_ns
                 continue
 
-            user_text = stringify(content)
+            user_text = content_to_text(content)
             history.append({"role": "user", "content": user_text})
             last_input_ns = timestamp_ns or last_input_ns
+            saw_human_input = True
             continue
 
         if rec_type != "assistant":
@@ -232,6 +266,11 @@ def parse_transcript(transcript_path, turn_start_fallback, pending_payloads, exp
                     }
                 )
 
+        # Claude can emit intermediate assistant records that contain only
+        # empty thinking blocks. Those should not consume the user's prompt.
+        if not output_text and not tool_calls:
+            continue
+
         llm_start_ns = last_input_ns or timestamp_ns or turn_start_ns
         llm_end_ns = timestamp_ns or llm_start_ns
         if llm_start_ns is None:
@@ -265,9 +304,11 @@ def parse_transcript(transcript_path, turn_start_fallback, pending_payloads, exp
             completion_item["tool_calls"] = tool_calls
         flatten_indexed("gen_ai.completion", [completion_item], attrs)
 
+        span_name = "LLM Call (User)" if saw_human_input else "LLM call"
+
         llms.append(
             {
-                "name": "LLM call",
+                "name": span_name,
                 "start_ns": int(llm_start_ns),
                 "end_ns": int(llm_end_ns),
                 "attributes": attrs,
@@ -279,6 +320,7 @@ def parse_transcript(transcript_path, turn_start_fallback, pending_payloads, exp
             assistant_history["tool_calls"] = tool_calls
         history.append(assistant_history)
         llm_input_cursor = len(history)
+        saw_human_input = False
 
     if turn_start_ns is None:
         turn_start_ns = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)

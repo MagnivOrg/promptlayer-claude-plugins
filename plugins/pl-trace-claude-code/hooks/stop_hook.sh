@@ -42,7 +42,6 @@ acquire_session_lock "$session_id" || exit 0
 ensure_session_initialized "$session_id"
 
 trace_id="$(get_session_state "$session_id" trace_id)"
-turn_span_id="$(get_session_state "$session_id" current_turn_span_id)"
 session_span_id="$(get_session_state "$session_id" session_span_id)"
 turn_start_ns="$(get_session_state "$session_id" current_turn_start_ns)"
 pending_tool_calls="$(get_session_state "$session_id" pending_tool_calls)"
@@ -55,14 +54,10 @@ session_start_ns="$(get_session_state "$session_id" session_start_ns)"
 [[ -z "$session_end_requested" ]] && session_end_requested="false"
 [[ -z "$session_start_ns" ]] && session_start_ns="$(now_ns)"
 
-if [[ -z "$turn_span_id" ]]; then
-	turn_span_id="$(generate_span_id)"
-	turn_start_ns="$(now_ns)"
-fi
+[[ -z "$turn_start_ns" ]] && turn_start_ns="$(now_ns)"
 
 # Keep lock scope short: snapshot + clear turn-specific mutable state.
 set_session_state "$session_id" stop_in_flight "true"
-set_session_state "$session_id" current_turn_span_id ""
 set_session_state "$session_id" current_turn_start_ns ""
 set_session_state "$session_id" pending_tool_calls "[]"
 
@@ -70,10 +65,25 @@ release_session_lock
 
 emitted_root="false"
 
+parse_transcript_with_retry() {
+	local attempts=0
+	local parsed llm_count
+	while true; do
+		parsed="$(PL_PENDING_TOOL_CALLS="$pending_tool_calls" python3 "$SCRIPT_DIR/parse_stop_transcript.py" "$transcript_path" "$turn_start_ns" "$session_id")"
+		llm_count="$(echo "$parsed" | jq -r '.llms | length')"
+		if [[ "$llm_count" -gt 0 || $attempts -ge 10 ]]; then
+			echo "$parsed"
+			return 0
+		fi
+		attempts=$((attempts + 1))
+		sleep 0.2
+	done
+}
+
 if [[ -z "$transcript_path" || ! -f "$transcript_path" ]]; then
 	log "WARN" "Stop missing transcript session_id=$session_id"
 else
-	parsed="$(PL_PENDING_TOOL_CALLS="$pending_tool_calls" python3 "$SCRIPT_DIR/parse_stop_transcript.py" "$transcript_path" "$turn_start_ns" "$session_id")"
+	parsed="$(parse_transcript_with_retry)"
 
 	turn_start_ns="$(echo "$parsed" | jq -r '.turn.start_ns')"
 	turn_end_ns="$(echo "$parsed" | jq -r '.turn.end_ns')"
@@ -92,9 +102,6 @@ else
 	add_span_to_batch "$trace_id" "$session_span_id" "" "Claude Code session" "1" "$session_start_ns" "$turn_end_ns" "$session_attrs" || true
 	emitted_root="true"
 
-	turn_attrs='{"source":"claude-code","hook":"UserPromptSubmit","node_type":"WORKFLOW"}'
-	add_span_to_batch "$trace_id" "$turn_span_id" "$session_span_id" "Turn" "1" "$turn_start_ns" "$turn_end_ns" "$turn_attrs" || true
-
 	while IFS= read -r tool; do
 		[[ -z "$tool" ]] && continue
 		span_id="$(generate_span_id)"
@@ -102,7 +109,7 @@ else
 		start_ns="$(echo "$tool" | jq -r '.start_ns')"
 		end_ns="$(echo "$tool" | jq -r '.end_ns')"
 		attrs="$(echo "$tool" | jq -c '.attributes')"
-		add_span_to_batch "$trace_id" "$span_id" "$turn_span_id" "$name" "3" "$start_ns" "$end_ns" "$attrs" || true
+		add_span_to_batch "$trace_id" "$span_id" "$session_span_id" "$name" "3" "$start_ns" "$end_ns" "$attrs" || true
 	done < <(echo "$parsed" | jq -c '.tools[]?')
 
 	while IFS= read -r llm; do
@@ -112,7 +119,7 @@ else
 		start_ns="$(echo "$llm" | jq -r '.start_ns')"
 		end_ns="$(echo "$llm" | jq -r '.end_ns')"
 		attrs="$(echo "$llm" | jq -c '.attributes')"
-		add_span_to_batch "$trace_id" "$span_id" "$turn_span_id" "$name" "3" "$start_ns" "$end_ns" "$attrs" || true
+		add_span_to_batch "$trace_id" "$span_id" "$session_span_id" "$name" "3" "$start_ns" "$end_ns" "$attrs" || true
 	done < <(echo "$parsed" | jq -c '.llms[]?')
 fi
 
@@ -135,7 +142,7 @@ if [[ "$emitted_root" == "true" ]]; then
 fi
 
 latest_end_requested="$(get_session_state "$session_id" session_end_requested)"
-latest_turn_span_id="$(get_session_state "$session_id" current_turn_span_id)"
+latest_turn_start_ns="$(get_session_state "$session_id" current_turn_start_ns)"
 latest_trace_id="$(get_session_state "$session_id" trace_id)"
 latest_session_span_id="$(get_session_state "$session_id" session_span_id)"
 latest_session_start_ns="$(get_session_state "$session_id" session_start_ns)"
@@ -143,7 +150,7 @@ latest_session_start_ns="$(get_session_state "$session_id" session_start_ns)"
 [[ -z "$latest_session_start_ns" ]] && latest_session_start_ns="$(now_ns)"
 
 need_finalize_root="false"
-if [[ "$latest_end_requested" == "true" && -z "$latest_turn_span_id" ]]; then
+if [[ "$latest_end_requested" == "true" && -z "$latest_turn_start_ns" ]]; then
 	need_finalize_root="true"
 fi
 
@@ -158,10 +165,10 @@ if [[ "$need_finalize_root" == "true" && -n "$latest_trace_id" && -n "$latest_se
 fi
 
 latest_end_requested="$(get_session_state "$session_id" session_end_requested)"
-latest_turn_span_id="$(get_session_state "$session_id" current_turn_span_id)"
+latest_turn_start_ns="$(get_session_state "$session_id" current_turn_start_ns)"
 [[ -z "$latest_end_requested" ]] && latest_end_requested="false"
 
-if [[ "$latest_end_requested" == "true" && -z "$latest_turn_span_id" ]]; then
+if [[ "$latest_end_requested" == "true" && -z "$latest_turn_start_ns" ]]; then
 	rm -f "$PL_SESSION_STATE_DIR/$session_id.json"
 	log "INFO" "SessionEnd finalized by Stop session_id=$session_id"
 fi

@@ -234,7 +234,6 @@ ensure_session_initialized() {
 	set_session_state "$sid" trace_id "$trace_id"
 	set_session_state "$sid" session_span_id "$session_span_id"
 	set_session_state "$sid" session_start_ns "$requested_start_ns"
-	set_session_state "$sid" current_turn_span_id ""
 	set_session_state "$sid" current_turn_start_ns ""
 	set_session_state "$sid" pending_tool_calls "[]"
 	set_session_state "$sid" session_init_source "lazy_init"
