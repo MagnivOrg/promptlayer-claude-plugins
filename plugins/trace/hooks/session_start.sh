@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=plugins/pl-trace-claude-code/hooks/lib.sh
+# shellcheck source=plugins/trace/hooks/lib.sh
 source "$SCRIPT_DIR/lib.sh"
 
 tracing_enabled || exit 0

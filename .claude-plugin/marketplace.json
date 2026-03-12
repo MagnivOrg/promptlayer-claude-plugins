@@ -1,17 +1,17 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "promptlayer-claude-plugin",
-  "version": "0.1.0",
-  "description": "PromptLayer Claude Code tracing plugin with OTLP/HTTP JSON transport",
+  "name": "promptlayer-claude-plugins",
+  "version": "1.0.0",
+  "description": "Automatically trace Claude Code conversations to PromptLayer. Captures sessions, user messages, assistant responses, and tool calls for observability.",
   "owner": {
     "name": "PromptLayer",
     "email": "support@promptlayer.com"
   },
   "plugins": [
     {
-      "name": "pl-trace-claude-code",
-      "description": "Trace Claude Code sessions and send OTLP/HTTP JSON spans to PromptLayer.",
-      "source": "./plugins/pl-trace-claude-code",
+      "name": "trace",
+      "description": "Automatically trace Claude Code conversations to PromptLayer. Captures user messages, assistant responses, and tool calls as structured spans.",
+      "source": "./plugins/trace",
       "category": "observability"
     }
   ]

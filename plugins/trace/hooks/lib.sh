@@ -1,5 +1,5 @@
 #!/bin/bash
-# Shared runtime helpers for pl-trace-claude-code hooks.
+# Shared runtime helpers for trace plugin hooks.
 
 set -euo pipefail
 umask 077

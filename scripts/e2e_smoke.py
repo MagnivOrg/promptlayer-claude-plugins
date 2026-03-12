@@ -6,7 +6,7 @@
 # ]
 # ///
 
-"""End-to-end smoke test for pl-trace-claude-code via Claude Agent SDK.
+"""End-to-end smoke test for trace plugin via Claude Agent SDK.
 
 The smoke test launches a local OTLP HTTP collector, runs a short Claude session
 with the plugin enabled, then asserts that OTLP payloads were actually received.
@@ -28,7 +28,7 @@ from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PLUGIN_PATH = REPO_ROOT / "plugins" / "pl-trace-claude-code"
+PLUGIN_PATH = REPO_ROOT / "plugins" / "trace"
 
 
 class _CollectorHandler(BaseHTTPRequestHandler):

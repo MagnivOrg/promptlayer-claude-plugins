@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-PLUGIN="pl-trace-claude-code@promptlayer-claude-plugin"
-MARKETPLACE="promptlayer-claude-plugin"
+PLUGIN="trace@promptlayer-claude-plugins"
+MARKETPLACE="promptlayer-claude-plugins"
 
 for scope in user project local; do
 	claude plugin uninstall --scope "$scope" "$PLUGIN" >/dev/null 2>&1 || true

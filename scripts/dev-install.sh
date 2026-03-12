@@ -2,9 +2,9 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET="$HOME/.claude/plugins/marketplaces/promptlayer-claude-plugin"
-PLUGIN="pl-trace-claude-code@promptlayer-claude-plugin"
-SETUP_SCRIPT="$TARGET/plugins/pl-trace-claude-code/setup.sh"
+TARGET="$HOME/.claude/plugins/marketplaces/promptlayer-claude-plugins"
+PLUGIN="trace@promptlayer-claude-plugins"
+SETUP_SCRIPT="$TARGET/plugins/trace/setup.sh"
 
 mkdir -p "$(dirname "$TARGET")"
 rm -rf "$TARGET"

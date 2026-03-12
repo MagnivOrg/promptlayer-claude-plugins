@@ -11,7 +11,7 @@ validate_json() {
 }
 
 validate_json .claude-plugin/marketplace.json
-validate_json plugins/pl-trace-claude-code/.claude-plugin/plugin.json
-validate_json plugins/pl-trace-claude-code/hooks/hooks.json
+validate_json plugins/trace/.claude-plugin/plugin.json
+validate_json plugins/trace/hooks/hooks.json
 
 echo "Manifest validation passed"

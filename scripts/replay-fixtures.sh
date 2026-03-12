@@ -14,6 +14,6 @@ export PROMPTLAYER_API_KEY="pl_test_key"
 export PROMPTLAYER_OTLP_ENDPOINT="http://127.0.0.1:9/v1/traces"
 
 # Expect failure to send (no server), but script should still run.
-cat plugins/pl-trace-claude-code/testdata/session_start_input.json | bash plugins/pl-trace-claude-code/hooks/session_start.sh || true
+cat plugins/trace/testdata/session_start_input.json | bash plugins/trace/hooks/session_start.sh || true
 
 echo "Fixture replay completed"

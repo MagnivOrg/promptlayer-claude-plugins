@@ -123,6 +123,7 @@ if [[ -n "$default_key" ]]; then
 	echo ""
 	api_key="${input_key:-$default_key}"
 else
+	echo "You can find or create an API key at: https://dashboard.promptlayer.com"
 	read -r -s -p "Enter PROMPTLAYER_API_KEY (input hidden): " input_key
 	echo ""
 	api_key="$input_key"
@@ -156,8 +157,8 @@ else
 	debug="false"
 fi
 
-mkdir -p .claude
-settings_file=".claude/settings.local.json"
+mkdir -p "$HOME/.claude"
+settings_file="$HOME/.claude/settings.json"
 
 if [[ -f "$settings_file" ]] && ! jq empty "$settings_file" >/dev/null 2>&1; then
 	echo "Error: $settings_file exists but is not valid JSON."
@@ -196,4 +197,6 @@ echo "Setup complete."
 echo "Next:"
 echo "  1. Start Claude Code in this directory: claude"
 echo "  2. Run one prompt and tool call"
-echo "  3. Inspect logs: tail -f ~/.claude/state/promptlayer_hook.log"
+echo "  3. View your traces at: https://dashboard.promptlayer.com"
+echo ""
+echo "Debug logs: tail -f ~/.claude/state/promptlayer_hook.log"

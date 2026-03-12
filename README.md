@@ -1,44 +1,66 @@
-# PromptLayer Claude Code Plugin Marketplace
+# PromptLayer Claude Code Plugin
 
-Open source Claude Code plugin marketplace for PromptLayer tracing.
+See every Claude Code session as structured traces in [PromptLayer](https://promptlayer.com) — user messages, assistant responses, tool calls, and token usage, all captured automatically.
 
-## Plugin
+## Quick Start
 
-- `pl-trace-claude-code`: traces Claude Code sessions and emits OTLP/HTTP JSON spans to PromptLayer.
-
-## Prerequisites
-
-- Claude Code CLI installed
-- PromptLayer API key (`PROMPTLAYER_API_KEY`)
-- `jq`, `curl`, `uuidgen`, and `python3` available in your shell
-
-## Install
+### 1. Install
 
 ```bash
-claude plugin marketplace add promptlayer/promptlayer-claude-plugin
-claude plugin install pl-trace-claude-code@promptlayer-claude-plugin
+claude plugin marketplace add promptlayer/promptlayer-claude-plugins
+claude plugin install trace@promptlayer-claude-plugins
 ```
 
-## Configure
+### 2. Configure
 
 Run the setup script from the project where you want tracing enabled:
 
 ```bash
-$HOME/.claude/plugins/marketplaces/promptlayer-claude-plugin/plugins/pl-trace-claude-code/setup.sh
+$HOME/.claude/plugins/marketplaces/promptlayer-claude-plugins/plugins/trace/setup.sh
 ```
 
-The script writes `.claude/settings.local.json` with:
+You will be prompted for your PromptLayer API key. You can find or create one at [dashboard.promptlayer.com](https://dashboard.promptlayer.com).
 
-- `TRACE_TO_PROMPTLAYER=true`
-- `PROMPTLAYER_API_KEY`
-- `PROMPTLAYER_OTLP_ENDPOINT` (default: `https://api.promptlayer.com/v1/traces`)
-- `PROMPTLAYER_CC_DEBUG`
+### 3. Verify
 
-## Verify
+1. Start Claude Code: `claude`
+2. Send a prompt
+3. Check your traces at [dashboard.promptlayer.com](https://dashboard.promptlayer.com)
 
-1. Start Claude Code in the configured directory: `claude`
-2. Send a prompt and use at least one tool
-3. Check hook logs: `tail -f ~/.claude/state/promptlayer_hook.log`
+## What Gets Traced
+
+The plugin hooks into Claude Code's lifecycle and emits [OTLP/HTTP JSON](docs/otlp-mapping.md) spans for:
+
+- **Sessions** — one root span per Claude Code session
+- **LLM calls** — model, token counts, prompts, and completions
+- **Tool calls** — tool name, input, and output
+
+## Prerequisites
+
+- Claude Code CLI installed
+- A PromptLayer account and API key ([dashboard.promptlayer.com](https://dashboard.promptlayer.com))
+- `jq`, `curl`, `uuidgen`, and `python3` available in your shell
+
+## Configuration
+
+The setup script writes `~/.claude/settings.json` with:
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `TRACE_TO_PROMPTLAYER` | Enable/disable tracing | `true` |
+| `PROMPTLAYER_API_KEY` | Your API key | _(required)_ |
+| `PROMPTLAYER_OTLP_ENDPOINT` | OTLP ingestion endpoint | `https://api.promptlayer.com/v1/traces` |
+| `PROMPTLAYER_CC_DEBUG` | Enable debug logging | `false` |
+
+Because this file lives in your home directory, your API key stays out of version control and tracing is enabled across all projects.
+
+## OTLP-Native Tracing
+
+This plugin is **OpenTelemetry (OTLP/HTTP JSON)** compatible:
+
+- **Open standard** — traces follow the [OTLP specification](https://opentelemetry.io/docs/specs/otlp/), not a vendor-specific format
+- **Portable** — swap or fan-out to any OTLP-compatible backend (Datadog, Honeycomb, Grafana Tempo, etc.) by changing one endpoint URL
+- **No SDK lock-in** — the plugin uses plain `curl` to send `ExportTraceServiceRequest` payloads; no proprietary client libraries required
 
 ## Troubleshooting
 
@@ -46,28 +68,9 @@ See [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ## Local Development
 
-Install from this local repo and run setup:
-
 ```bash
-make dev
-```
-
-`make dev` symlinks this repo as the marketplace source, installs `pl-trace-claude-code`, and runs the setup script.
-
-Remove the local plugin install and cleanup local artifacts:
-
-```bash
-make uninstall
-```
-
-Run validation + lint + fixture replay:
-
-```bash
-make test
-```
-
-Run end-to-end SDK smoke test (requires `ANTHROPIC_API_KEY`):
-
-```bash
-make smoke
+make dev        # Symlink repo as marketplace source, install plugin, run setup
+make uninstall  # Remove local install and cleanup artifacts
+make test       # Validate manifests + lint + fixture replay
+make smoke      # E2E smoke test (requires ANTHROPIC_API_KEY)
 ```
