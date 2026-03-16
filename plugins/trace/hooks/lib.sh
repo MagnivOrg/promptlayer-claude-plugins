@@ -16,8 +16,11 @@ export PL_QUEUE_DRAIN_LIMIT="${PROMPTLAYER_QUEUE_DRAIN_LIMIT:-10}"
 export PL_OTLP_CONNECT_TIMEOUT="${PROMPTLAYER_OTLP_CONNECT_TIMEOUT:-5}"
 export PL_OTLP_MAX_TIME="${PROMPTLAYER_OTLP_MAX_TIME:-12}"
 export PL_PLUGIN_VERSION="1.0.0"
-export PL_CC_VERSION="$(claude --version 2>/dev/null || echo 'unknown')"
+PL_CC_VERSION="$(claude --version 2>/dev/null || echo 'unknown')"
+export PL_CC_VERSION
 export PL_USER_AGENT="promptlayer-claude-plugin/${PL_PLUGIN_VERSION} claude-code/${PL_CC_VERSION}"
+PL_HOOKS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PL_HOOKS_DIR
 
 mkdir -p "$(dirname "$PL_LOG_FILE")"
 mkdir -p "$PL_SESSION_STATE_DIR"
@@ -66,6 +69,61 @@ generate_span_id() {
 	uuidgen | tr -d '-' | tr '[:upper:]' '[:lower:]' | cut -c1-16
 }
 
+parse_traceparent() {
+	local raw="${1:-}"
+	[[ -z "$raw" ]] && return 1
+
+	raw="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
+
+	if [[ ! "$raw" =~ ^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})(-.+)?$ ]]; then
+		return 1
+	fi
+
+	local version="${BASH_REMATCH[1]}"
+	local trace_id="${BASH_REMATCH[2]}"
+	local parent_span_id="${BASH_REMATCH[3]}"
+	local trace_flags="${BASH_REMATCH[4]}"
+	local suffix="${BASH_REMATCH[5]:-}"
+
+	if [[ "$version" == "ff" ]]; then
+		return 1
+	fi
+	if [[ "$version" == "00" && -n "$suffix" ]]; then
+		return 1
+	fi
+	if [[ "$trace_id" == "00000000000000000000000000000000" ]]; then
+		return 1
+	fi
+	if [[ "$parent_span_id" == "0000000000000000" ]]; then
+		return 1
+	fi
+
+	printf '%s %s %s %s\n' "$version" "$trace_id" "$parent_span_id" "$trace_flags"
+}
+
+load_initial_trace_context() {
+	PL_INITIAL_TRACEPARENT_VERSION=""
+	PL_INITIAL_TRACE_ID=""
+	PL_INITIAL_PARENT_SPAN_ID=""
+	PL_INITIAL_TRACE_FLAGS=""
+	PL_INITIAL_TRACE_CONTEXT_SOURCE="generated"
+
+	local raw="${PROMPTLAYER_TRACEPARENT:-}"
+	if [[ -z "$raw" ]]; then
+		return 0
+	fi
+
+	local parsed
+	if ! parsed="$(parse_traceparent "$raw")"; then
+		log "WARN" "Ignoring invalid PROMPTLAYER_TRACEPARENT"
+		return 1
+	fi
+
+	read -r PL_INITIAL_TRACEPARENT_VERSION PL_INITIAL_TRACE_ID PL_INITIAL_PARENT_SPAN_ID PL_INITIAL_TRACE_FLAGS <<<"$parsed"
+	PL_INITIAL_TRACE_CONTEXT_SOURCE="external_traceparent"
+	return 0
+}
+
 normalize_hex_id() {
 	local raw="$1"
 	local expected_len="$2"
@@ -93,22 +151,11 @@ normalize_hex_id() {
 
 hex_to_base64() {
 	local hex="$1"
-	python3 - "$hex" <<'PY'
-import base64
-import binascii
-import sys
-
-h = sys.argv[1]
-raw = binascii.unhexlify(h)
-print(base64.b64encode(raw).decode("ascii"))
-PY
+	python3 "$PL_HOOKS_DIR/hook_utils.py" hex_to_base64 "$hex"
 }
 
 now_ns() {
-	python3 - <<'PY'
-import time
-print(time.time_ns())
-PY
+	python3 "$PL_HOOKS_DIR/hook_utils.py" now_ns
 }
 
 session_state_file() {
@@ -197,9 +244,10 @@ ensure_session_initialized() {
 	local requested_start_ns="${2:-}"
 	[[ -z "$sid" ]] && return 1
 
-	local trace_id session_span_id session_start_ns init_source root_emitted pending_tool_calls
+	local trace_id session_span_id session_parent_span_id session_start_ns init_source root_emitted pending_tool_calls
 	trace_id="$(get_session_state "$sid" trace_id)"
 	session_span_id="$(get_session_state "$sid" session_span_id)"
+	session_parent_span_id="$(get_session_state "$sid" session_parent_span_id)"
 	session_start_ns="$(get_session_state "$sid" session_start_ns)"
 	init_source="$(get_session_state "$sid" session_init_source)"
 	root_emitted="$(get_session_state "$sid" session_root_emitted)"
@@ -220,6 +268,18 @@ ensure_session_initialized() {
 		if [[ -z "$pending_tool_calls" ]]; then
 			set_session_state "$sid" pending_tool_calls "[]"
 		fi
+		if [[ -z "$session_parent_span_id" ]]; then
+			set_session_state "$sid" session_parent_span_id ""
+		fi
+		if [[ -z "$(get_session_state "$sid" session_traceparent_version)" ]]; then
+			set_session_state "$sid" session_traceparent_version ""
+		fi
+		if [[ -z "$(get_session_state "$sid" session_trace_flags)" ]]; then
+			set_session_state "$sid" session_trace_flags ""
+		fi
+		if [[ -z "$(get_session_state "$sid" trace_context_source)" ]]; then
+			set_session_state "$sid" trace_context_source "generated"
+		fi
 		if [[ -z "$(get_session_state "$sid" session_end_requested)" ]]; then
 			set_session_state "$sid" session_end_requested "false"
 		fi
@@ -231,15 +291,21 @@ ensure_session_initialized() {
 
 	# Fallback path for SDK environments that do not surface SessionStart.
 	[[ -z "$requested_start_ns" ]] && requested_start_ns="$(now_ns)"
+	load_initial_trace_context || true
+	[[ -z "$trace_id" ]] && trace_id="${PL_INITIAL_TRACE_ID:-}"
 	[[ -z "$trace_id" ]] && trace_id="$(generate_trace_id)"
 	[[ -z "$session_span_id" ]] && session_span_id="$(generate_span_id)"
 
 	set_session_state "$sid" trace_id "$trace_id"
 	set_session_state "$sid" session_span_id "$session_span_id"
+	set_session_state "$sid" session_parent_span_id "${PL_INITIAL_PARENT_SPAN_ID:-}"
 	set_session_state "$sid" session_start_ns "$requested_start_ns"
 	set_session_state "$sid" current_turn_start_ns ""
 	set_session_state "$sid" pending_tool_calls "[]"
 	set_session_state "$sid" session_init_source "lazy_init"
+	set_session_state "$sid" session_traceparent_version "${PL_INITIAL_TRACEPARENT_VERSION:-}"
+	set_session_state "$sid" session_trace_flags "${PL_INITIAL_TRACE_FLAGS:-}"
+	set_session_state "$sid" trace_context_source "${PL_INITIAL_TRACE_CONTEXT_SOURCE:-generated}"
 	set_session_state "$sid" session_root_emitted "false"
 	set_session_state "$sid" session_end_requested "false"
 	set_session_state "$sid" stop_in_flight "false"

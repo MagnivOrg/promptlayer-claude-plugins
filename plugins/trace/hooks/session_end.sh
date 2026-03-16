@@ -17,6 +17,7 @@ trap 'release_session_lock' EXIT
 
 trace_id="$(get_session_state "$session_id" trace_id)"
 session_span_id="$(get_session_state "$session_id" session_span_id)"
+session_parent_span_id="$(get_session_state "$session_id" session_parent_span_id)"
 session_start_ns="$(get_session_state "$session_id" session_start_ns)"
 stop_in_flight="$(get_session_state "$session_id" stop_in_flight)"
 current_turn_start_ns="$(get_session_state "$session_id" current_turn_start_ns)"
@@ -37,7 +38,7 @@ trap - EXIT
 # span_id conflict, so this safely updates the end time and lifecycle attribute.
 end_ns="$(now_ns)"
 attrs='{"source":"claude-code","hook":"SessionEnd","node_type":"WORKFLOW","session.lifecycle":"complete"}'
-emit_span "$trace_id" "$session_span_id" "" "Claude Code session" "1" "$session_start_ns" "$end_ns" "$attrs" || true
+emit_span "$trace_id" "$session_span_id" "$session_parent_span_id" "Claude Code session" "1" "$session_start_ns" "$end_ns" "$attrs" || true
 
 acquire_session_lock "$session_id" || exit 0
 trap 'release_session_lock' EXIT

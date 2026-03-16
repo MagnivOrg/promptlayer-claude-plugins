@@ -43,6 +43,7 @@ ensure_session_initialized "$session_id"
 
 trace_id="$(get_session_state "$session_id" trace_id)"
 session_span_id="$(get_session_state "$session_id" session_span_id)"
+session_parent_span_id="$(get_session_state "$session_id" session_parent_span_id)"
 turn_start_ns="$(get_session_state "$session_id" current_turn_start_ns)"
 pending_tool_calls="$(get_session_state "$session_id" pending_tool_calls)"
 session_end_requested="$(get_session_state "$session_id" session_end_requested)"
@@ -99,7 +100,7 @@ else
 		session_lifecycle_attr="in_progress"
 	fi
 	session_attrs="{\"source\":\"claude-code\",\"hook\":\"$session_hook_attr\",\"node_type\":\"WORKFLOW\",\"session.lifecycle\":\"$session_lifecycle_attr\"}"
-	add_span_to_batch "$trace_id" "$session_span_id" "" "Claude Code session" "1" "$session_start_ns" "$turn_end_ns" "$session_attrs" || true
+	add_span_to_batch "$trace_id" "$session_span_id" "$session_parent_span_id" "Claude Code session" "1" "$session_start_ns" "$turn_end_ns" "$session_attrs" || true
 	emitted_root="true"
 
 	while IFS= read -r tool; do
@@ -127,7 +128,7 @@ fi
 if [[ "$session_end_requested" == "true" ]]; then
 	end_ns="$(now_ns)"
 	session_end_attrs='{"source":"claude-code","hook":"SessionEnd","node_type":"WORKFLOW","session.lifecycle":"deferred_finalize"}'
-	add_span_to_batch "$trace_id" "$session_span_id" "" "Claude Code session" "1" "$session_start_ns" "$end_ns" "$session_end_attrs" || true
+	add_span_to_batch "$trace_id" "$session_span_id" "$session_parent_span_id" "Claude Code session" "1" "$session_start_ns" "$end_ns" "$session_end_attrs" || true
 	emitted_root="true"
 fi
 
@@ -145,6 +146,7 @@ latest_end_requested="$(get_session_state "$session_id" session_end_requested)"
 latest_turn_start_ns="$(get_session_state "$session_id" current_turn_start_ns)"
 latest_trace_id="$(get_session_state "$session_id" trace_id)"
 latest_session_span_id="$(get_session_state "$session_id" session_span_id)"
+latest_session_parent_span_id="$(get_session_state "$session_id" session_parent_span_id)"
 latest_session_start_ns="$(get_session_state "$session_id" session_start_ns)"
 [[ -z "$latest_end_requested" ]] && latest_end_requested="false"
 [[ -z "$latest_session_start_ns" ]] && latest_session_start_ns="$(now_ns)"
@@ -158,7 +160,7 @@ if [[ "$need_finalize_root" == "true" && -n "$latest_trace_id" && -n "$latest_se
 	release_session_lock
 	end_ns="$(now_ns)"
 	finalize_attrs='{"source":"claude-code","hook":"SessionEnd","node_type":"WORKFLOW","session.lifecycle":"deferred_finalize"}'
-	emit_span "$latest_trace_id" "$latest_session_span_id" "" "Claude Code session" "1" "$latest_session_start_ns" "$end_ns" "$finalize_attrs" || true
+	emit_span "$latest_trace_id" "$latest_session_span_id" "$latest_session_parent_span_id" "Claude Code session" "1" "$latest_session_start_ns" "$end_ns" "$finalize_attrs" || true
 	acquire_session_lock "$session_id" || exit 0
 	set_session_state "$session_id" stop_in_flight "false"
 	set_session_state "$session_id" session_root_emitted "true"
