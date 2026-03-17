@@ -119,6 +119,31 @@ test_valid_traceparent_stop_hook() {
 	assert_session_span_payload "$home/.claude/state/promptlayer_otlp_queue.ndjson" "$TRACE_ID_VALID" "$PARENT_SPAN_ID_VALID"
 }
 
+test_full_history_parser() {
+	local parsed_file
+	parsed_file="$(mktemp "${TMPDIR:-/tmp}/pl-full-history-parse.XXXXXX")"
+	trap 'rm -f "$parsed_file"' RETURN
+
+	PL_PENDING_TOOL_CALLS='[{"tool_name":"DocsSearch","function_input":{"query":"current status"},"function_output":{"content":"Current status: all systems operational."}}]' \
+		python3 plugins/trace/hooks/parse_stop_transcript.py \
+		plugins/trace/testdata/stop_transcript_full_history.jsonl \
+		0 \
+		"$SESSION_ID" >"$parsed_file"
+
+	python3 scripts/assert_parsed_full_history.py "$parsed_file"
+}
+
+test_full_history_stop_hook() {
+	local home
+	home="$(new_home)"
+	trap 'cleanup_home "$home"' RETURN
+
+	run_hook "$home" "plugins/trace/hooks/session_start.sh" "plugins/trace/testdata/session_start_input.json"
+	run_hook "$home" "plugins/trace/hooks/stop_hook.sh" "plugins/trace/testdata/stop_input_full_history.json"
+
+	python3 scripts/assert_otlp_full_history.py "$home/.claude/state/promptlayer_otlp_queue.ndjson"
+}
+
 test_missing_traceparent_fallback() {
 	local home trace_id
 	home="$(new_home)"
@@ -185,6 +210,8 @@ test_future_version_traceparent_with_suffix() {
 
 test_valid_traceparent_session_end
 test_valid_traceparent_stop_hook
+test_full_history_parser
+test_full_history_stop_hook
 test_missing_traceparent_fallback
 test_invalid_traceparent_fallback
 test_non_zero_zero_version_traceparent
