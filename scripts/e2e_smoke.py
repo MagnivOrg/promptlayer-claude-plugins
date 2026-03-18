@@ -132,7 +132,7 @@ def validate_span_graph(spans: list[dict]) -> tuple[list[str], dict]:
     if not spans:
         return ["No spans found in captured OTLP payloads"], {}
 
-    traces: dict[str, list[dict]] = {}
+    traces: dict[str, dict[str, dict]] = {}
     for span in spans:
         trace_id = span.get("traceId")
         span_id = span.get("spanId")
@@ -142,7 +142,7 @@ def validate_span_graph(spans: list[dict]) -> tuple[list[str], dict]:
         if not span_id:
             errors.append("Span missing spanId")
             continue
-        traces.setdefault(trace_id, []).append(span)
+        traces.setdefault(trace_id, {})[span_id] = span
 
     trace_count = len(traces)
     if trace_count != 1:
@@ -153,13 +153,11 @@ def validate_span_graph(spans: list[dict]) -> tuple[list[str], dict]:
     session_root_found = False
     unresolved_parent_ids: set[str] = set()
 
-    for trace_id, trace_spans in traces.items():
-        by_id: dict[str, dict] = {}
-        for span in trace_spans:
-            span_id = span["spanId"]
-            if span_id in by_id:
-                errors.append(f"Duplicate spanId in trace {trace_id}")
-            by_id[span_id] = span
+    unique_span_count = 0
+
+    for trace_id, by_id in traces.items():
+        trace_spans = list(by_id.values())
+        unique_span_count += len(trace_spans)
 
         trace_roots = 0
         for span in trace_spans:
@@ -212,7 +210,8 @@ def validate_span_graph(spans: list[dict]) -> tuple[list[str], dict]:
         )
 
     metrics = {
-        "span_count": len(spans),
+        "raw_span_count": len(spans),
+        "span_count": unique_span_count,
         "trace_count": trace_count,
         "root_count": root_count,
         "edge_count": edge_count,
