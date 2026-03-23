@@ -13,10 +13,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install jq (ubuntu)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y jq
-      - name: Validate manifests
-        run: ./scripts/validate-manifests.sh
-      - name: Fixture replay
-        run: ./scripts/replay-fixtures.sh
+      - uses: astral-sh/setup-uv@v4
+      - name: Run test suite
+        run: make test
