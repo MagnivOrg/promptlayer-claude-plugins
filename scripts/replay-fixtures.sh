@@ -4,11 +4,6 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-if ! command -v jq >/dev/null 2>&1; then
-	echo "jq is not installed, skipping fixture replay"
-	exit 0
-fi
-
 TRACEPARENT_VALID="00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 TRACEPARENT_FUTURE="01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-03"
 TRACEPARENT_FUTURE_SUFFIXED="02-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-05-deadbeef"
@@ -44,7 +39,9 @@ state_value() {
 	local home="$1"
 	local sid="$2"
 	local key="$3"
-	jq -r ".${key} // empty" "$home/.claude/state/promptlayer_sessions/$sid.json"
+	python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get(sys.argv[2], ""))' \
+		"$home/.claude/state/promptlayer_sessions/$sid.json" \
+		"$key"
 }
 
 run_hook() {
@@ -125,7 +122,7 @@ test_full_history_parser() {
 	trap 'rm -f "$parsed_file"' RETURN
 
 	PL_PENDING_TOOL_CALLS='[{"tool_name":"DocsSearch","function_input":{"query":"current status"},"function_output":{"content":"Current status: all systems operational."}}]' \
-		python3 plugins/trace/hooks/parse_stop_transcript.py \
+		python3 plugins/trace/hooks/py/cli.py parse-stop-transcript \
 		plugins/trace/testdata/stop_transcript_full_history.jsonl \
 		0 \
 		"$SESSION_ID" >"$parsed_file"

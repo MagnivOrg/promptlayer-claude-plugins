@@ -12,17 +12,9 @@ DEFAULT_ENDPOINT="https://api.promptlayer.com/v1/traces"
 install_hint() {
 	local cmd="$1"
 	if [[ "$OSTYPE" == "darwin"* ]]; then
-		if [[ "$cmd" == "uuidgen" ]]; then
-			echo "  uuidgen should already be available on macOS."
-		else
-			echo "  Install with: brew install $cmd"
-		fi
+		echo "  Install with: brew install $cmd"
 	else
-		if [[ "$cmd" == "uuidgen" ]]; then
-			echo "  Install with: sudo apt-get install uuid-runtime"
-		else
-			echo "  Install with: sudo apt-get install $cmd"
-		fi
+		echo "  Install with: sudo apt-get install $cmd"
 	fi
 }
 
@@ -54,17 +46,8 @@ load_env_key() {
 test_endpoint() {
 	local endpoint="$1"
 	local api_key="$2"
-
-	local payload status
-	payload='{"resourceSpans":[]}'
-	status="$(curl -sS -o /dev/null -w "%{http_code}" \
-		-X POST \
-		-H "Content-Type: application/json" \
-		-H "X-Api-Key: $api_key" \
-		--connect-timeout 5 \
-		--max-time 12 \
-		"$endpoint" \
-		-d "$payload" || true)"
+	local status
+	status="$(python3 "$HOOKS_DIR/py/cli.py" probe-endpoint "$endpoint" "$api_key")"
 
 	if [[ "$status" == "000" || -z "$status" ]]; then
 		echo "WARN: Could not reach endpoint: $endpoint"
@@ -94,20 +77,25 @@ test_endpoint() {
 	echo "WARN: Endpoint check returned unexpected status: $status"
 }
 
-for hook in lib.sh session_start.sh user_prompt_submit.sh post_tool_use.sh stop_hook.sh session_end.sh hooks.json parse_stop_transcript.py; do
+for hook in lib.sh session_start.sh user_prompt_submit.sh post_tool_use.sh stop_hook.sh session_end.sh hooks.json; do
 	if [[ ! -f "$HOOKS_DIR/$hook" ]]; then
 		echo "Error: missing plugin file: $HOOKS_DIR/$hook"
 		exit 1
 	fi
 done
 
-for cmd in jq curl uuidgen python3; do
-	if ! command -v "$cmd" >/dev/null 2>&1; then
-		echo "Error: missing required command: $cmd"
-		install_hint "$cmd"
+for py_file in cli.py context.py handlers.py otlp.py settings.py state.py stop_parser.py traceparent.py; do
+	if [[ ! -f "$HOOKS_DIR/py/$py_file" ]]; then
+		echo "Error: missing plugin file: $HOOKS_DIR/py/$py_file"
 		exit 1
 	fi
 done
+
+if ! command -v python3 >/dev/null 2>&1; then
+	echo "Error: missing required command: python3"
+	install_hint "python3"
+	exit 1
+fi
 
 default_key="${PROMPTLAYER_API_KEY:-}"
 if [[ -z "$default_key" ]]; then
@@ -160,30 +148,10 @@ fi
 mkdir -p "$HOME/.claude"
 settings_file="$HOME/.claude/settings.json"
 
-if [[ -f "$settings_file" ]] && ! jq empty "$settings_file" >/dev/null 2>&1; then
+if ! python3 "$HOOKS_DIR/py/cli.py" write-settings-env "$settings_file" "$api_key" "$endpoint" "$debug" >/dev/null 2>&1; then
 	echo "Error: $settings_file exists but is not valid JSON."
 	echo "Fix or remove it, then rerun setup."
 	exit 1
-fi
-
-env_json="$(
-	jq -n \
-		--arg k "$api_key" \
-		--arg e "$endpoint" \
-		--arg d "$debug" \
-		'{
-			"TRACE_TO_PROMPTLAYER": "true",
-			"PROMPTLAYER_API_KEY": $k,
-			"PROMPTLAYER_OTLP_ENDPOINT": $e,
-			"PROMPTLAYER_CC_DEBUG": $d
-		}'
-)"
-
-if [[ -f "$settings_file" ]]; then
-	tmp="$(jq --argjson env "$env_json" '.env = (.env // {}) + $env' "$settings_file")"
-	echo "$tmp" >"$settings_file"
-else
-	jq -n --argjson env "$env_json" '{env: $env}' >"$settings_file"
 fi
 
 chmod 600 "$settings_file" 2>/dev/null || true

@@ -16,6 +16,7 @@ lint:
 	if command -v shfmt >/dev/null 2>&1; then shfmt -d plugins/trace/hooks/*.sh plugins/trace/setup.sh scripts/*.sh; else echo "shfmt not installed, skipping"; fi
 
 test: validate lint
+	uv run --extra dev pytest
 	./scripts/replay-fixtures.sh
 
 smoke:

@@ -39,7 +39,7 @@ The plugin hooks into Claude Code's lifecycle and emits [OTLP/HTTP JSON](docs/ot
 
 - Claude Code CLI installed
 - A PromptLayer account and API key ([dashboard.promptlayer.com](https://dashboard.promptlayer.com))
-- `jq`, `curl`, `uuidgen`, and `python3` available in your shell
+- `python3` available in your shell
 - **macOS** or **Linux** (tested on Ubuntu)
 
 ## Configuration
@@ -61,7 +61,7 @@ This plugin is **OpenTelemetry (OTLP/HTTP JSON)** compatible:
 
 - **Open standard** — traces follow the [OTLP specification](https://opentelemetry.io/docs/specs/otlp/), not a vendor-specific format
 - **Portable** — swap or fan-out to any OTLP-compatible backend (Datadog, Honeycomb, Grafana Tempo, etc.) by changing one endpoint URL
-- **No SDK lock-in** — the plugin uses plain `curl` to send `ExportTraceServiceRequest` payloads; no proprietary client libraries required
+- **No SDK lock-in** — the plugin sends `ExportTraceServiceRequest` payloads directly over OTLP/HTTP JSON using the Python standard library; no proprietary client libraries required
 
 ## Troubleshooting
 
@@ -69,9 +69,15 @@ See [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ## Local Development
 
+Install Python dev tooling with:
+
+```bash
+uv sync --extra dev
+```
+
 ```bash
 make dev        # Symlink repo as marketplace source, install plugin, run setup
 make uninstall  # Remove local install and cleanup artifacts
-make test       # Validate manifests + lint + fixture replay
+make test       # Validate manifests + lint + pytest unit tests + fixture replay
 make smoke      # E2E smoke test (requires ANTHROPIC_API_KEY)
 ```
