@@ -101,3 +101,60 @@ def test_build_stop_hook_span_specs_uses_lazy_init_session_attrs():
     assert len(span_specs) == 1
     assert span_specs[0].attrs["hook"] == "StopFallback"
     assert span_specs[0].attrs["session.lifecycle"] == "stop_fallback"
+
+
+def test_session_input_from_parsed_picks_first_user_prompt():
+    from stop_parser import session_input_from_parsed
+
+    parsed = parse_transcript(
+        str(REPO_ROOT / "plugins" / "trace" / "testdata" / "stop_transcript_full_history.jsonl"),
+        0,
+        [
+            {
+                "tool_name": "DocsSearch",
+                "function_input": {"query": "current status"},
+                "function_output": {"content": "Current status: all systems operational."},
+            }
+        ],
+        SESSION_ID,
+    )
+
+    assert session_input_from_parsed(parsed) == "hello"
+
+
+def test_session_input_from_parsed_is_empty_without_llms():
+    from stop_parser import session_input_from_parsed
+
+    assert session_input_from_parsed({"turn": {}, "tools": [], "llms": []}) == ""
+
+
+def test_build_stop_hook_span_specs_stamps_session_input_on_root_only():
+    span_specs = build_stop_hook_span_specs(
+        parsed={"turn": {"start_ns": 10, "end_ns": 20}, "tools": [], "llms": []},
+        trace_id="a" * 32,
+        session_span_id="b" * 16,
+        session_parent_span_id="",
+        session_start_ns="10",
+        session_init_source="session_start_hook",
+        generate_span_id=lambda: "c" * 16,
+        session_input="Where is my order?",
+    )
+
+    root = span_specs[0]
+    assert root.attrs["input.value"] == "Where is my order?"
+    # Output is deliberately left to the request logs
+    assert "output.value" not in root.attrs
+
+
+def test_build_stop_hook_span_specs_omits_missing_session_input():
+    span_specs = build_stop_hook_span_specs(
+        parsed={"turn": {"start_ns": 10, "end_ns": 20}, "tools": [], "llms": []},
+        trace_id="a" * 32,
+        session_span_id="b" * 16,
+        session_parent_span_id="",
+        session_start_ns="10",
+        session_init_source="session_start_hook",
+        generate_span_id=lambda: "c" * 16,
+    )
+
+    assert "input.value" not in span_specs[0].attrs

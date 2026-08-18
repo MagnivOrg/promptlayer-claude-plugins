@@ -343,6 +343,28 @@ def parse_transcript(transcript_path, turn_start_fallback, pending_payloads, exp
     }
 
 
+SESSION_INPUT_MAX_CHARS = 4000
+
+
+def session_input_from_parsed(parsed):
+    """First user prompt of a parsed turn, for the session root's input.value headline stamp.
+    Returns "" when absent."""
+    for llm in parsed.get("llms", []):
+        attrs = llm.get("attributes", {}) or {}
+        index = 0
+        while f"gen_ai.prompt.{index}.role" in attrs:
+            if attrs.get(f"gen_ai.prompt.{index}.role") == "user":
+                text = str(attrs.get(f"gen_ai.prompt.{index}.content") or "")
+                if text:
+                    return text[:SESSION_INPUT_MAX_CHARS]
+            index += 1
+    return ""
+
+
+def session_input_attrs(session_input):
+    return {"input.value": session_input} if session_input else {}
+
+
 def build_stop_hook_span_specs(
     *,
     parsed,
@@ -352,6 +374,7 @@ def build_stop_hook_span_specs(
     session_start_ns,
     session_init_source,
     generate_span_id,
+    session_input="",
 ):
     turn = parsed.get("turn", {})
     turn_start_ns = str(turn.get("start_ns", session_start_ns))
@@ -378,6 +401,7 @@ def build_stop_hook_span_specs(
                 "hook": session_hook_attr,
                 "node_type": "WORKFLOW",
                 "session.lifecycle": session_lifecycle_attr,
+                **session_input_attrs(session_input),
             },
         )
     ]

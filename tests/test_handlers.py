@@ -90,3 +90,45 @@ def test_handle_stop_hook_returns_missing_transcript_marker(tmp_path, monkeypatc
     )
 
     assert result == "example-session-id\tmissing_transcript"
+
+
+def test_handle_stop_hook_records_session_input_and_session_end_stamps_root(tmp_path, monkeypatch):
+    from handlers import handle_session_end
+    import otlp
+
+    monkeypatch.delenv("PROMPTLAYER_TRACEPARENT", raising=False)
+    sent = []
+    monkeypatch.setattr(otlp, "send_payload_with_queueing", lambda ctx, payload: sent.append(payload))
+    import handlers as handlers_module
+
+    monkeypatch.setattr(handlers_module, "send_payload_with_queueing", lambda ctx, payload: sent.append(payload))
+    ctx = make_ctx(tmp_path)
+    handle_session_start(ctx, '{"session_id":"example-session-id"}')
+
+    fixture = REPO_ROOT / "plugins" / "trace" / "testdata" / "stop_transcript_full_history.jsonl"
+    result = handle_stop_hook(
+        ctx,
+        json.dumps({"session_id": "example-session-id", "transcript_path": str(fixture)}),
+    )
+    assert result == "example-session-id\tok"
+
+    state = load_state(tmp_path, "example-session-id")
+    assert state["session_input"] == "hello"
+    assert "session_output" not in state
+
+    sent.clear()
+    handle_session_end(ctx, '{"session_id":"example-session-id"}')
+    assert len(sent) == 1
+    root_attrs = _root_attributes(sent[0])
+    assert root_attrs["input.value"] == "hello"
+    assert "output.value" not in root_attrs
+    assert root_attrs["session.lifecycle"] == "complete"
+
+
+def _root_attributes(payload):
+    spans = payload["resourceSpans"][0]["scopeSpans"][0]["spans"]
+    root = next(span for span in spans if not span.get("parentSpanId"))
+    return {
+        attr["key"]: next(iter(attr["value"].values()))
+        for attr in root["attributes"]
+    }
