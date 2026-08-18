@@ -127,6 +127,13 @@ def parse_otlp_spans(payloads: list[dict]) -> tuple[int, int, list[dict]]:
     return parsed_payloads, payload_schema_matches, spans
 
 
+def _string_attribute(span: dict, key: str) -> str:
+    for attribute in span.get("attributes", []) or []:
+        if attribute.get("key") == key:
+            return str((attribute.get("value") or {}).get("stringValue") or "")
+    return ""
+
+
 def validate_span_graph(spans: list[dict]) -> tuple[list[str], dict]:
     errors: list[str] = []
     if not spans:
@@ -151,6 +158,7 @@ def validate_span_graph(spans: list[dict]) -> tuple[list[str], dict]:
     root_count = 0
     edge_count = 0
     session_root_found = False
+    session_root_input = ""
     unresolved_parent_ids: set[str] = set()
 
     unique_span_count = 0
@@ -177,6 +185,7 @@ def validate_span_graph(spans: list[dict]) -> tuple[list[str], dict]:
                 trace_roots += 1
                 if span.get("name") == "Claude Code session":
                     session_root_found = True
+                    session_root_input = _string_attribute(span, "input.value")
             else:
                 edge_count += 1
                 if parent_id not in by_id:
@@ -216,6 +225,7 @@ def validate_span_graph(spans: list[dict]) -> tuple[list[str], dict]:
         "root_count": root_count,
         "edge_count": edge_count,
         "session_root_found": session_root_found,
+        "session_root_input": session_root_input,
         "unresolved_parent_count": len(unresolved_parent_ids),
     }
     return errors, metrics
@@ -257,7 +267,7 @@ def main() -> int:
         print("ANTHROPIC_API_KEY is required for smoke test", file=sys.stderr)
         return 2
 
-    model = "claude-3-haiku-20240307"
+    model = os.environ.get("PL_SMOKE_MODEL", "claude-haiku-4-5")
     run_id = f"pl-smoke-{int(time.time())}"
     prompt = (
         f"Reply with exactly: {run_id}\n"
@@ -316,6 +326,12 @@ def main() -> int:
     if summary["payloads_schema_matched"] <= 0:
         return 1
     if summary["graph_errors"]:
+        return 1
+    if run_id not in graph_metrics.get("session_root_input", ""):
+        print(
+            f"Session root input.value does not contain the run prompt: {graph_metrics.get('session_root_input')!r}",
+            file=sys.stderr,
+        )
         return 1
     return 0
 

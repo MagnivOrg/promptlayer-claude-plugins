@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "promptlayer-claude-plugins",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Automatically trace Claude Code conversations to PromptLayer. Captures sessions, user messages, assistant responses, and tool calls for observability.",
   "owner": {
     "name": "PromptLayer",
