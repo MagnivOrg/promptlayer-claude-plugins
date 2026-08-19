@@ -125,6 +125,42 @@ def test_handle_stop_hook_records_session_input_and_session_end_stamps_root(tmp_
     assert root_attrs["session.lifecycle"] == "complete"
 
 
+def test_handle_stop_hook_keeps_trace_ids_when_session_end_races_the_parse_window(tmp_path, monkeypatch):
+    # SessionEnd can run (and delete the state file) while Stop is parsing the transcript outside
+    # the lock. Stop's spans must still go out on the session trace, and the file must stay deleted.
+    from handlers import handle_session_end
+    import handlers as handlers_module
+    import otlp
+
+    monkeypatch.delenv("PROMPTLAYER_TRACEPARENT", raising=False)
+    sent = []
+    monkeypatch.setattr(handlers_module, "send_payload_with_queueing", lambda ctx, payload: sent.append(payload))
+    ctx = make_ctx(tmp_path)
+    trace_id = handle_session_start(ctx, '{"session_id":"example-session-id"}').split("\t")[1]
+    state_file = tmp_path / "sessions" / "example-session-id.json"
+
+    real_parse = handlers_module.parse_transcript
+
+    def parse_then_session_end(*args, **kwargs):
+        parsed = real_parse(*args, **kwargs)
+        handle_session_end(ctx, '{"session_id":"example-session-id"}')
+        return parsed
+
+    monkeypatch.setattr(handlers_module, "parse_transcript", parse_then_session_end)
+
+    fixture = REPO_ROOT / "plugins" / "trace" / "testdata" / "stop_transcript_full_history.jsonl"
+    result = handle_stop_hook(ctx, json.dumps({"session_id": "example-session-id", "transcript_path": str(fixture)}))
+    assert result == "example-session-id\tok"
+
+    stop_spans = sent[-1]["resourceSpans"][0]["scopeSpans"][0]["spans"]
+    expected_trace_id = otlp.hex_to_base64(trace_id)
+    assert len(stop_spans) == 4
+    assert {span["traceId"] for span in stop_spans} == {expected_trace_id}
+    assert sum(1 for span in stop_spans if not span.get("parentSpanId")) == 1
+    assert _root_attributes(sent[-1])["input.value"] == "hello"
+    assert not state_file.exists()
+
+
 def _root_attributes(payload):
     spans = payload["resourceSpans"][0]["scopeSpans"][0]["spans"]
     root = next(span for span in spans if not span.get("parentSpanId"))
