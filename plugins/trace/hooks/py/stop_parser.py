@@ -68,6 +68,22 @@ def message_text(content):
     return ""
 
 
+def message_thinking(content):
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "thinking":
+                thinking = block.get("thinking")
+                if isinstance(thinking, str) and thinking:
+                    parts.append(thinking)
+        return "\n".join(parts).strip()
+    if isinstance(content, dict) and content.get("type") == "thinking":
+        thinking = content.get("thinking")
+        if isinstance(thinking, str):
+            return thinking
+    return ""
+
+
 def flatten_indexed(prefix, items, out):
     for i, item in enumerate(items):
         for key, value in item.items():
@@ -101,6 +117,72 @@ def is_tool_result_user(rec):
     )
 
 
+def assistant_message_id(rec):
+    if rec.get("type") != "assistant":
+        return ""
+    msg = rec.get("message", {})
+    if not isinstance(msg, dict):
+        return ""
+    return stringify(msg.get("id"))
+
+
+def merge_content_blocks(existing, incoming):
+    if isinstance(existing, list) and isinstance(incoming, list):
+        return existing + incoming
+    if existing is None:
+        return incoming
+    if incoming is None:
+        return existing
+    if isinstance(existing, list):
+        return existing + [incoming]
+    if isinstance(incoming, list):
+        return [existing] + incoming
+    return [existing, incoming]
+
+
+def coalesce_assistant_message_fragments(records):
+    """Claude Code writes one API reply as several consecutive transcript records (one per content
+    block) that share message.id and repeat the same usage. Merge them back into one record so a
+    reply becomes one LLM span with its usage counted once."""
+    coalesced = []
+    for rec in records:
+        if not coalesced:
+            coalesced.append(rec)
+            continue
+
+        prev = coalesced[-1]
+        rec_msg_id = assistant_message_id(rec)
+        prev_msg_id = assistant_message_id(prev)
+        same_assistant_message = (
+            rec_msg_id
+            and prev_msg_id == rec_msg_id
+            and rec.get("sessionId") == prev.get("sessionId")
+        )
+        if not same_assistant_message:
+            coalesced.append(rec)
+            continue
+
+        prev_msg = prev.get("message", {})
+        rec_msg = rec.get("message", {})
+        if not isinstance(prev_msg, dict) or not isinstance(rec_msg, dict):
+            coalesced.append(rec)
+            continue
+
+        prev_msg["content"] = merge_content_blocks(
+            prev_msg.get("content"),
+            rec_msg.get("content"),
+        )
+        for key in ("model", "stop_reason", "stop_sequence", "stop_details", "context_management"):
+            if rec_msg.get(key) is not None:
+                prev_msg[key] = rec_msg.get(key)
+        if rec_msg.get("usage"):
+            prev_msg["usage"] = rec_msg.get("usage")
+        if rec.get("timestamp"):
+            prev["timestamp"] = rec.get("timestamp")
+
+    return coalesced
+
+
 def parse_transcript(transcript_path, turn_start_fallback, pending_payloads, expected_session_id=None):
     records = []
     with open(transcript_path, encoding="utf-8") as f:
@@ -121,6 +203,8 @@ def parse_transcript(transcript_path, turn_start_fallback, pending_payloads, exp
     if not records:
         now_ns = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
         return {"turn": {"start_ns": now_ns, "end_ns": now_ns}, "tools": [], "llms": []}
+
+    records = coalesce_assistant_message_fragments(records)
 
     turn_start_idx = 0
     for i in range(len(records) - 1, -1, -1):
@@ -248,6 +332,7 @@ def parse_transcript(transcript_path, turn_start_fallback, pending_payloads, exp
         prompt_tokens = safe_int(usage.get("input_tokens"), 0)
         completion_tokens = safe_int(usage.get("output_tokens"), 0)
         output_text = message_text(msg.get("content"))
+        output_thinking = message_thinking(msg.get("content"))
 
         tool_calls = []
         content_blocks = msg.get("content")
@@ -277,7 +362,7 @@ def parse_transcript(transcript_path, turn_start_fallback, pending_payloads, exp
                     }
                 )
 
-        if not output_text and not tool_calls:
+        if not output_text and not output_thinking and not tool_calls:
             continue
 
         llm_start_ns = last_input_ns or timestamp_ns or turn_start_ns
@@ -309,6 +394,8 @@ def parse_transcript(transcript_path, turn_start_fallback, pending_payloads, exp
         flatten_indexed("gen_ai.prompt", history, attrs)
 
         completion_item = {"role": "assistant", "content": output_text}
+        if output_thinking:
+            completion_item["thinking"] = output_thinking
         if tool_calls:
             completion_item["tool_calls"] = tool_calls
         flatten_indexed("gen_ai.completion", [completion_item], attrs)
@@ -326,6 +413,8 @@ def parse_transcript(transcript_path, turn_start_fallback, pending_payloads, exp
             )
 
         assistant_history = {"role": "assistant", "content": output_text}
+        if output_thinking:
+            assistant_history["thinking"] = output_thinking
         if tool_calls:
             assistant_history["tool_calls"] = tool_calls
         history.append(assistant_history)

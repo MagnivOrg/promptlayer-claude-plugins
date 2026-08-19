@@ -38,6 +38,32 @@ def test_parse_transcript_full_history_fixture_preserves_expected_spans():
     assert llms[1]["attributes"]["gen_ai.completion.0.content"] == "All systems are operational."
 
 
+def test_parse_transcript_coalesces_split_assistant_records_into_one_llm_span():
+    # Claude Code writes one reply as several records (thinking / text / tool_use) sharing message.id,
+    # each repeating the same usage. They must collapse into one span with usage counted once.
+    parsed = parse_transcript(
+        str(REPO_ROOT / "plugins" / "trace" / "testdata" / "stop_transcript_split_assistant.jsonl"),
+        0,
+        [{"tool_name": "Bash", "function_input": {"command": "pytest -q"}, "function_output": "1 failed, 24 passed"}],
+        SESSION_ID,
+    )
+
+    llms = parsed["llms"]
+    assert [llm["attributes"]["gen_ai.response.id"] for llm in llms] == ["msg_split_1", "msg_split_2"]
+
+    merged = llms[0]["attributes"]
+    assert merged["gen_ai.usage.input_tokens"] == 120
+    assert merged["gen_ai.usage.output_tokens"] == 48
+    assert merged["gen_ai.completion.0.thinking"] == "I should run the suite first, then read the failures."
+    assert merged["gen_ai.completion.0.content"] == "Running the test suite now."
+    assert '"name": "Bash"' in merged["gen_ai.completion.0.tool_calls"]
+    assert merged["gen_ai.completion.0.finish_reason"] == "tool_use"
+    assert llms[0]["end_ns"] > llms[0]["start_ns"]
+
+    assert llms[1]["attributes"]["gen_ai.usage.input_tokens"] == 200
+    assert llms[1]["attributes"]["gen_ai.prompt.1.thinking"] == "I should run the suite first, then read the failures."
+
+
 def test_build_stop_hook_span_specs_builds_root_and_child_span_specs():
     parsed = {
         "turn": {"start_ns": 100, "end_ns": 220},
